@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GIF Maker</title>
+  <style>
+    body { font: 1rem system-ui, sans-serif; max-width: 36rem; margin: 3rem auto; padding: 0 1rem; }
+    form { display: grid; gap: 1.25rem; }
+    #drop-zone { border: 2px dashed #777; border-radius: .5rem; padding: 2rem; }
+    #drop-zone.dragging { background: #e3f2fd; border-color: #1565c0; }
+    input[type="range"] { width: 100%; }
+    button { padding: .75rem; cursor: pointer; }
+    .error { color: #b00020; }
+  </style>
+</head>
+<body>
+  <h1>MP4 to GIF</h1>
+  <p>Convert to a 480-pixel-wide GIF at 30 fps.</p>
+  {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+  <form action="{{ url_for('convert') }}" method="post" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div id="drop-zone">
+      <label for="video">Drop an MP4 here or choose a file (up to 100 MiB).</label>
+      <p><input id="video" name="video" type="file" accept=".mp4,video/mp4" required></p>
+      <output id="filename" aria-live="polite"></output>
+    </div>
+    <div>
+      <label for="pts">PTS multiplier: <output id="pts-value">0.5 (2× speed)</output></label>
+      <input id="pts" name="pts" type="range" min="0.1" max="2" step="0.1" value="0.5">
+      <small>Lower values are faster; 1 is original speed, 2 is half speed.</small>
+    </div>
+    <label>
+      <input type="checkbox" name="preserve_palette">
+      Preserve last palette (skip palette generation)
+    </label>
+    <small>Use this when experimenting with speeds for the same video.
+      If no palette is saved yet, one will be generated.</small>
+    <button type="submit">Convert &amp; download GIF</button>
+    <p id="status" role="status"></p>
+  </form>
+  <script>
+    const video = document.getElementById("video");
+    const dropZone = document.getElementById("drop-zone");
+    const pts = document.getElementById("pts");
+    const button = document.querySelector("button");
+    const status = document.getElementById("status");
+    const showFilename = () => {
+      document.getElementById("filename").textContent = video.files[0]?.name || "";
+    };
+    video.addEventListener("change", showFilename);
+    pts.addEventListener("input", () => {
+      document.getElementById("pts-value").textContent =
+        `${pts.value} (${(1 / Number(pts.value)).toFixed(2)}× speed)`;
+    });
+    ["dragenter", "dragover"].forEach(event => dropZone.addEventListener(event, e => {
+      e.preventDefault();
+      dropZone.classList.add("dragging");
+    }));
+    ["dragleave", "drop"].forEach(event => dropZone.addEventListener(event, e => {
+      e.preventDefault();
+      dropZone.classList.remove("dragging");
+    }));
+    dropZone.addEventListener("drop", e => {
+      if (e.dataTransfer.files.length !== 1 ||
+          !e.dataTransfer.files[0].name.toLowerCase().endsWith(".mp4")) {
+        status.textContent = "Please drop one MP4 file.";
+        return;
+      }
+      video.files = e.dataTransfer.files;
+      showFilename();
+      status.textContent = "";
+    });
+    document.querySelector("form").addEventListener("submit", async e => {
+      e.preventDefault();
+      button.disabled = true;
+      status.textContent = "Converting… please wait.";
+      try {
+        const response = await fetch(e.target.action, {
+          method: "POST",
+          body: new FormData(e.target)
+        });
+        if (!response.ok) {
+          const html = new DOMParser().parseFromString(await response.text(), "text/html");
+          throw new Error(html.querySelector('[role="alert"]')?.textContent || "Conversion failed.");
+        }
+        const url = URL.createObjectURL(await response.blob());
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = "output.gif";
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 60000);
+        status.textContent = "Done! Your GIF is ready.";
+      } catch (error) {
+        status.textContent = error.message;
+      } finally {
+        button.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
