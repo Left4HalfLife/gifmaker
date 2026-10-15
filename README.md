@@ -2,16 +2,17 @@
 
 A small Flask web app for converting uploaded MP4 videos to GIFs with FFmpeg.
 
-## Run with Docker
+## Run with Docker Compose
 
 ```sh
-docker build -t gifmaker .
-docker run --rm -p 8000:8000 gifmaker
+docker compose up -d
 ```
 
 Open <http://localhost:8000>, select or drag and drop an MP4, adjust the PTS
 slider, and click **Convert & download GIF**. The default PTS multiplier of
 `0.5` doubles playback speed; `1` preserves speed and `2` halves it.
+
+Stop the app with `docker compose down`.
 
 The app performs these two conversion steps:
 
