@@ -1,6 +1,9 @@
 services:
   gifmaker:
     build: .
+    environment:
+      SECRET_KEY: ${SECRET_KEY:-}
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-1}
     ports:
       - "8000:8000"
     restart: unless-stopped
