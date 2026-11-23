@@ -4,24 +4,30 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>GIF Maker</title>
-  <style>
-    body { font: 1rem system-ui, sans-serif; max-width: 36rem; margin: 3rem auto; padding: 0 1rem; }
-    form { display: grid; gap: 1.25rem; }
-    #drop-zone { border: 2px dashed #777; border-radius: .5rem; padding: 2rem; }
-    #drop-zone.dragging { background: #e3f2fd; border-color: #1565c0; }
-    input[type="range"] { width: 100%; }
-    button { padding: .75rem; cursor: pointer; }
-    .error { color: #b00020; }
-  </style>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+  <script defer src="{{ url_for('static', filename='app.js') }}"></script>
 </head>
 <body>
   <h1>MP4 to GIF</h1>
   <p>Convert to a 480-pixel-wide GIF at 30 fps.</p>
   {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
-  <form action="{{ url_for('convert') }}" method="post" enctype="multipart/form-data">
+  <section class="preview" id="palette-section" hidden aria-live="polite">
+    <h2>Preserved palette</h2>
+    <figure>
+      <img id="palette-preview" alt="Last generated video palette">
+      <figcaption>Last generated palette, created by <span id="palette-filename"></span>.</figcaption>
+    </figure>
+  </section>
+  <form
+    action="{{ url_for('convert') }}"
+    data-cleanup-url="{{ url_for('cleanup') }}"
+    data-palette-info-url="{{ url_for('palette_info') }}"
+    method="post"
+    enctype="multipart/form-data"
+  >
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <div id="drop-zone">
-      <label for="video">Drop an MP4 here or choose a file (up to 100 MiB).</label>
+      <label for="video">Drop an MP4 here or choose a file (up to 100 MiB and 2 minutes).</label>
       <p><input id="video" name="video" type="file" accept=".mp4,video/mp4" required></p>
       <output id="filename" aria-live="polite"></output>
     </div>
@@ -36,69 +42,13 @@
     </label>
     <small>Use this when experimenting with speeds for the same video.
       If no palette is saved yet, one will be generated.</small>
-    <button type="submit">Convert &amp; download GIF</button>
+    <button type="submit">Generate GIF</button>
     <p id="status" role="status"></p>
   </form>
-  <script>
-    const video = document.getElementById("video");
-    const dropZone = document.getElementById("drop-zone");
-    const pts = document.getElementById("pts");
-    const button = document.querySelector("button");
-    const status = document.getElementById("status");
-    const showFilename = () => {
-      document.getElementById("filename").textContent = video.files[0]?.name || "";
-    };
-    video.addEventListener("change", showFilename);
-    pts.addEventListener("input", () => {
-      document.getElementById("pts-value").textContent =
-        `${pts.value} (${(1 / Number(pts.value)).toFixed(2)}× speed)`;
-    });
-    ["dragenter", "dragover"].forEach(event => dropZone.addEventListener(event, e => {
-      e.preventDefault();
-      dropZone.classList.add("dragging");
-    }));
-    ["dragleave", "drop"].forEach(event => dropZone.addEventListener(event, e => {
-      e.preventDefault();
-      dropZone.classList.remove("dragging");
-    }));
-    dropZone.addEventListener("drop", e => {
-      if (e.dataTransfer.files.length !== 1 ||
-          !e.dataTransfer.files[0].name.toLowerCase().endsWith(".mp4")) {
-        status.textContent = "Please drop one MP4 file.";
-        return;
-      }
-      video.files = e.dataTransfer.files;
-      showFilename();
-      status.textContent = "";
-    });
-    document.querySelector("form").addEventListener("submit", async e => {
-      e.preventDefault();
-      button.disabled = true;
-      status.textContent = "Converting… please wait.";
-      try {
-        const response = await fetch(e.target.action, {
-          method: "POST",
-          body: new FormData(e.target)
-        });
-        if (!response.ok) {
-          const html = new DOMParser().parseFromString(await response.text(), "text/html");
-          throw new Error(html.querySelector('[role="alert"]')?.textContent || "Conversion failed.");
-        }
-        const url = URL.createObjectURL(await response.blob());
-        const link = document.createElement("a");
-        link.href = url;
-        link.download = "output.gif";
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-        setTimeout(() => URL.revokeObjectURL(url), 60000);
-        status.textContent = "Done! Your GIF is ready.";
-      } catch (error) {
-        status.textContent = error.message;
-      } finally {
-        button.disabled = false;
-      }
-    });
-  </script>
+  <section class="preview" id="gif-section" hidden aria-live="polite">
+    <h2>Your generated GIF</h2>
+    <img id="gif-preview" alt="Generated GIF preview">
+    <a id="gif-download" class="button" download>Download GIF</a>
+  </section>
 </body>
 </html>

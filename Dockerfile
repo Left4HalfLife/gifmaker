@@ -10,6 +10,7 @@ RUN pip install --no-cache-dir -r requirements.txt \
     && useradd --create-home gifmaker
 COPY app.py .
 COPY templates/ templates/
+COPY static/ static/
 
 USER gifmaker
 EXPOSE 8000
