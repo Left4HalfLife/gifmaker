@@ -22,12 +22,14 @@ app.config.update(
     MAX_FORM_MEMORY_SIZE=1024 * 1024,
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
-    SESSION_COOKIE_SECURE=os.environ.get("SESSION_COOKIE_SECURE") == "1",
+    SESSION_COOKIE_SECURE=os.environ.get("SESSION_COOKIE_SECURE") != "0",
 )
 palette_storage = tempfile.TemporaryDirectory(prefix="gifmaker-palettes-")
 palette_directory = Path(palette_storage.name)
 palette_lock = threading.Lock()
 PALETTE_TTL_SECONDS = 3600
+MAX_CACHED_PALETTES = 256
+MAX_PALETTE_BYTES = 64 * 1024
 MAX_VIDEO_DURATION_SECONDS = 120
 MAX_VIDEO_PIXELS = 3840 * 2160
 MAX_GIF_HEIGHT = 2160
@@ -50,10 +52,7 @@ def palette_path(client_id):
     return palette_directory / f"{client_id}.png"
 
 
-def current_palette(client_id):
-    path = palette_path(client_id)
-    if path is None or not path.exists():
-        return None
+def _current_palette_locked(path):
     try:
         if path.stat().st_mtime < time.time() - PALETTE_TTL_SECONDS:
             path.unlink(missing_ok=True)
@@ -61,6 +60,14 @@ def current_palette(client_id):
     except FileNotFoundError:
         return None
     return path
+
+
+def current_palette(client_id):
+    path = palette_path(client_id)
+    if path is None:
+        return None
+    with palette_lock:
+        return _current_palette_locked(path)
 
 
 def purge_expired_palettes():
@@ -105,6 +112,26 @@ class MediaValidationError(Exception):
     pass
 
 
+def cache_palette(source, destination):
+    if source.stat().st_size > MAX_PALETTE_BYTES:
+        raise MediaValidationError("The generated palette is too large.")
+    with palette_lock:
+        palettes = []
+        for path in palette_directory.glob("*.png"):
+            if path == destination:
+                continue
+            try:
+                palettes.append((path.stat().st_mtime_ns, path))
+            except FileNotFoundError:
+                continue
+        palettes.sort(key=lambda entry: entry[0])
+        excess = max(0, len(palettes) - MAX_CACHED_PALETTES + 1)
+        for _, path in palettes[:excess]:
+            path.unlink(missing_ok=True)
+        source.touch()
+        os.replace(source, destination)
+
+
 def probe_video(source):
     try:
         result = subprocess.run(
@@ -114,6 +141,8 @@ def probe_video(source):
                 "error",
                 "-protocol_whitelist",
                 "file,pipe",
+                "-f",
+                "mp4",
                 "-select_streams",
                 "v:0",
                 "-show_entries",
@@ -170,6 +199,8 @@ def add_security_headers(response):
     response.headers["Referrer-Policy"] = "no-referrer"
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
+    if app.config["SESSION_COOKIE_SECURE"] or request.is_secure:
+        response.headers["Strict-Transport-Security"] = "max-age=31536000"
     return response
 
 
@@ -211,21 +242,22 @@ def convert():
             source_arguments = [
                 "-protocol_whitelist", "file,pipe", "-f", "mp4", "-i", str(source)
             ]
-            reuse_palette = (
-                request.form.get("preserve_palette") == "on"
-                and cached_palette.exists()
-            )
-            if reuse_palette:
-                shutil.copyfile(cached_palette, palette)
-            else:
+            reuse_palette = False
+            if request.form.get("preserve_palette") == "on":
+                with palette_lock:
+                    if _current_palette_locked(cached_palette) is not None:
+                        shutil.copyfile(cached_palette, palette)
+                        reuse_palette = True
+            if not reuse_palette:
                 ffmpeg(source_arguments + [
+                    "-map", "0:v:0",
                     "-vf", "fps=30,scale=480:-1:flags=lanczos,palettegen",
                     "-frames:v", "1", str(palette),
                 ])
             ffmpeg(source_arguments + [
                 "-protocol_whitelist", "file,pipe", "-i", str(palette),
                 "-filter_complex",
-                f"fps=30,setpts={pts:g}*PTS,scale=480:-1:flags=lanczos[x];"
+                f"[0:v:0]fps=30,setpts={pts:g}*PTS,scale=480:-1:flags=lanczos[x];"
                 "[x][1:v]paletteuse",
                 "-fs", str(MAX_GIF_BYTES),
                 str(output),
@@ -233,9 +265,7 @@ def convert():
             if output.stat().st_size > MAX_GIF_BYTES:
                 raise MediaValidationError("The generated GIF is too large.")
             gif = io.BytesIO(output.read_bytes())
-            with palette_lock:
-                os.replace(palette, cached_palette)
-                cached_palette.touch()
+            cache_palette(palette, cached_palette)
             if not reuse_palette:
                 session["palette_video_name"] = video_name
             session.setdefault(

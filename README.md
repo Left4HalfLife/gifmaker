@@ -5,7 +5,7 @@ A small Flask web app for converting uploaded MP4 videos to GIFs with FFmpeg.
 ## Run with Docker Compose
 
 ```sh
-docker compose up -d
+SESSION_COOKIE_SECURE=0 docker compose up -d
 ```
 
 Open <http://localhost:8000>, select or drag and drop an MP4, adjust the PTS
@@ -28,8 +28,10 @@ skipping the first command. If there is no saved palette, the app generates one.
 The saved palette preview identifies the source video. Uncheck the option when
 changing videos. Closing or leaving the page sends a best-effort cleanup request;
 palettes also expire after an hour and are removed by a background cleanup
-worker. Uploads and conversion files are removed after each request, and
-generated GIF bytes are returned directly rather than stored on the server.
+worker. The cache holds at most 256 palettes of up to 64 KiB each; the oldest
+palette is evicted when the cache is full. Uploads and conversion files are
+removed after each request, and generated GIF bytes are returned directly rather
+than stored on the server.
 
 Uploads are limited to 100 MiB, two minutes, and 4K resolution. Output is limited
 to 50 MiB and a 2160-pixel generated height, with a 120-second timeout per
@@ -42,9 +44,14 @@ build; consult the FFmpeg/Debian license information before redistributing an im
 
 The container runs as an unprivileged user with one worker, which owns the
 temporary palette cache. For deployment, use HTTPS behind a reverse proxy and
-set a random `SECRET_KEY` environment variable. This is a small synchronous app,
-not a public multi-tenant conversion service. Set
-`SESSION_COOKIE_SECURE=1` when the app is served over HTTPS.
+set a random `SECRET_KEY` environment variable. Secure session cookies and a
+one-year HSTS policy are enabled by default; ensure the proxy redirects HTTP to
+HTTPS. The `SESSION_COOKIE_SECURE=0` setting above is only for local HTTP
+development. Docker Compose passes both `SECRET_KEY` and
+`SESSION_COOKIE_SECURE` to the container. This is a small synchronous app, not
+a public multi-tenant conversion service. The Python base image is pinned by
+digest; update the digest and rebuild regularly to receive base image security
+updates.
 
 ## Run locally
 
@@ -54,5 +61,5 @@ Install FFmpeg separately using your operating system's package manager, then:
 python -m venv .venv
 . .venv/bin/activate
 pip install -r requirements.txt
-gunicorn --bind 127.0.0.1:8000 --workers 1 --timeout 300 app:app
+SESSION_COOKIE_SECURE=0 gunicorn --bind 127.0.0.1:8000 --workers 1 --timeout 300 app:app
 ```
